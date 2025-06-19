@@ -1,3 +1,4 @@
+// App.js
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import './index.css';
@@ -7,10 +8,25 @@ const API_URL = 'http://localhost:5000/api/todos';
 function App() {
   const [todos, setTodos] = useState([]);
   const [text, setText] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // Centralized error handler
+  const handleError = msg => {
+    setError(msg);
+    setTimeout(() => setError(''), 3000);
+  };
 
   const fetchTodos = async () => {
-    const res = await axios.get(API_URL);
-    setTodos(res.data);
+    try {
+      const res = await axios.get(API_URL);
+      setTodos(res.data);
+    } catch {
+      handleError('❌ Failed to load todos.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -19,46 +35,100 @@ function App() {
 
   const addTodo = async () => {
     if (!text.trim()) return;
-    const res = await axios.post(API_URL, { text });
-    setTodos([...todos, res.data]);
+    setSaving(true);
+
+    const optimistic = { _id: Date.now().toString(), text, completed: false, pending: true };
+    setTodos(prev => [...prev, optimistic]);
     setText('');
+
+    try {
+      const res = await axios.post(API_URL, { text });
+      setTodos(prev =>
+        prev.map(t => (t._id === optimistic._id ? res.data : t))
+      );
+    } catch {
+      setTodos(prev => prev.filter(t => t._id !== optimistic._id));
+      handleError('❌ Could not add todo.');
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const toggleComplete = async (todo) => {
-    const res = await axios.put(`${API_URL}/${todo._id}`, {
-      ...todo,
-      completed: !todo.completed,
-    });
-    setTodos(todos.map((t) => (t._id === res.data._id ? res.data : t)));
+  const toggleComplete = async todo => {
+    const toggled = { ...todo, completed: !todo.completed, pending: true };
+    setTodos(prev => prev.map(t => (t._id === todo._id ? toggled : t)));
+
+    try {
+      const res = await axios.put(`${API_URL}/${todo._id}`, toggled);
+      setTodos(prev => prev.map(t => (t._id === todo._id ? res.data : t)));
+    } catch {
+      setTodos(prev => prev.map(t => (t._id === todo._id ? todo : t)));
+      handleError('❌ Failed to update todo.');
+    }
   };
 
-  const deleteTodo = async (id) => {
-    await axios.delete(`${API_URL}/${id}`);
-    setTodos(todos.filter((t) => t._id !== id));
+  const deleteTodo = async id => {
+    const removed = todos.find(t => t._id === id);
+    setTodos(prev => prev.filter(t => t._id !== id));
+
+    try {
+      await axios.delete(`${API_URL}/${id}`);
+    } catch {
+      setTodos(prev => [...prev, removed]);
+      handleError('❌ Failed to delete todo.');
+    }
   };
 
   return (
     <div className="app">
       <div className="todo-container">
-        <h1>📝 Advanced To-Do List</h1>
-        <div className="input-area">
-          <input
-            type="text"
-            placeholder="Add your task..."
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-          />
-          <button onClick={addTodo}>Add</button>
-        </div>
+        <h1>📝 Advanced To‑Do List</h1>
 
-        <ul className="todo-list">
-          {todos.map((todo) => (
-            <li key={todo._id} className={todo.completed ? 'completed' : ''}>
-              <span onClick={() => toggleComplete(todo)}>{todo.text}</span>
-              <button className="delete" onClick={() => deleteTodo(todo._id)}>✖</button>
-            </li>
-          ))}
-        </ul>
+        {error && <p className="error">{error}</p>}
+        {loading ? (
+          <p>Loading tasks...</p>
+        ) : (
+          <>
+            <div className="input-area">
+              <input
+                type="text"
+                placeholder="Add your task..."
+                value={text}
+                onChange={e => setText(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && addTodo()}
+                disabled={saving}
+              />
+              <button onClick={addTodo} disabled={saving}>
+                {saving ? 'Adding...' : 'Add'}
+              </button>
+            </div>
+
+            <ul className="todo-list">
+              {todos.length === 0 ? (
+                <li className="empty">No tasks found. Add your first one!</li>
+              ) : (
+                todos.map(todo => (
+                  <li
+                    key={todo._id}
+                    className={`${todo.completed ? 'completed' : ''} ${todo.pending ? 'pending' : ''}`}
+                  >
+                    <span onClick={() => toggleComplete(todo)}>
+                      {todo.text}
+                      {todo.pending && '…'}
+                    </span>
+                    <button
+                      className="delete"
+                      onClick={() => deleteTodo(todo._id)}
+                      disabled={todo.pending}
+                    >
+                      ✖
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          </>
+        )}
       </div>
     </div>
   );
